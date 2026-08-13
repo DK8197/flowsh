@@ -376,13 +376,13 @@ Flowsh is still young. Here's where we're heading.
 
 ### v0.1.x — Make it feel great
 
-- [ ] Editor scrolling
-- [ ] Undo / redo
-- [ ] Async command execution
-- [ ] Live output streaming
-- [ ] Cancel running commands
-- [ ] Better multi-line command handling
-- [ ] More shell compatibility tests
+- [x] Editor scrolling
+- [x] Undo / redo
+- [x] Async command execution
+- [x] Live output streaming
+- [x] Cancel running commands
+- [x] Better multi-line command handling
+- [x] More shell compatibility tests
 
 ### v0.2 — Developer experience
 
