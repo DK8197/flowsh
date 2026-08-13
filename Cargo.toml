@@ -1,0 +1,20 @@
+[package]
+name = "shdev"
+version = "0.1.1"
+edition = "2021"
+description = "A terminal editor where every line of a shell script runs independently against a persistent bash session — edit, run, and iterate without losing shell state."
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/OWNER/shdev"
+readme = "README.md"
+keywords = ["terminal", "shell", "bash", "tui", "editor"]
+categories = ["command-line-utilities", "development-tools"]
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+ratatui = "0.26"
+crossterm = "0.27"
+portable-pty = "0.8"
+anyhow = "1.0"
+unicode-width = "0.1"
+crossbeam-channel = "0.5"
