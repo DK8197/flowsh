@@ -22,7 +22,7 @@ knowing the reasoning first avoids wasted work on either side.
 ## Setup
 
 ```bash
-git clone <this repo>
+git clone [flowsh](https://github.com/DK8197/flowsh.git)
 cd shdev
 cargo build --release
 cargo test
