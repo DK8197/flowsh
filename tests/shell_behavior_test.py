@@ -39,6 +39,8 @@ BINARY = os.path.join(os.path.dirname(__file__), "..", "target", "release", "shd
 CTRL_J = bytes([0x0A])  # run current line -- see testing.md's key byte table
 CTRL_E = bytes([0x05])  # run everything above the cursor
 DOWN = b"\x1b[B"
+ALT_UP = b"\x1b[1;3A"  # command-history recall: previous command (xterm CSI-modifier form; modifier 3 = Alt)
+ALT_DOWN = b"\x1b[1;3B"  # command-history recall: next command / restore
 ANSI_RE = re.compile(rb"\x1b\[[0-9;?]*[a-zA-Z]")
 
 
@@ -531,6 +533,76 @@ def test_history_fully_isolated_from_outer_terminal():
     )
 
 
+def test_command_history_recall():
+    """Alt+Up/Alt+Down: readline-style recall of previously run commands
+    into the current line -- distinct from the Ctrl+R/F6 execution
+    history browser. Verifies recall of the most recent command, cycling
+    further back to an older one, and restoring unsaved draft text when
+    recalling back past the newest entry. Each check uses its own fresh
+    session: running a recalled command adds a *new* history entry,
+    which would shift what "N presses back" points to if checks were
+    chained in one session.
+    """
+    s = Session("echo one\necho two\n\n")
+    try:
+        s.drain(1.2)
+        s.run_current_line()  # echo one
+        s.down()
+        s.run_current_line()  # echo two
+        s.down()  # blank line 3
+
+        s.send(ALT_UP)
+        s.drain(0.4)
+        s.run_current_line()
+        text = s.text()
+        check("recall: Alt+Up recalls the most recent command", "two" in text, text[-300:])
+    finally:
+        s.close()
+
+    s2 = Session("echo one\necho two\n\n")
+    try:
+        s2.drain(1.2)
+        s2.run_current_line()
+        s2.down()
+        s2.run_current_line()
+        s2.down()
+
+        s2.send(ALT_UP)
+        s2.drain(0.4)
+        s2.send(ALT_UP)
+        s2.drain(0.4)
+        s2.run_current_line()
+        text2 = s2.text()
+        check("recall: a second Alt+Up cycles to an older command", "one" in text2[-400:], text2[-400:])
+    finally:
+        s2.close()
+
+    # Third session: verify Alt+Down past the newest entry restores
+    # whatever draft text was on the line before recall started.
+    s3 = Session("echo one\necho two\n\n")
+    try:
+        s3.drain(1.2)
+        s3.run_current_line()
+        s3.down()
+        s3.run_current_line()
+        s3.down()
+        s3.send(b"draft_text_marker")
+        s3.drain(0.3)
+        s3.send(ALT_UP)
+        s3.drain(0.3)
+        s3.send(ALT_DOWN)
+        s3.drain(0.3)
+        s3.run_current_line()
+        text3 = s3.text()
+        check(
+            "recall: Alt+Down past newest restores the original unsaved line",
+            "draft_text_marker" in text3,
+            text3[-400:],
+        )
+    finally:
+        s3.close()
+
+
 TESTS = [
     test_simple,
     test_pwd,
@@ -551,6 +623,7 @@ TESTS = [
     test_batch_run_above_cursor,
     test_history_stays_clean,
     test_history_fully_isolated_from_outer_terminal,
+    test_command_history_recall,
 ]
 
 

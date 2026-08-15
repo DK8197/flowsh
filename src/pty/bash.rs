@@ -16,7 +16,15 @@ pub struct BashProcess {
 
 impl BashProcess {
     /// Spawn a new persistent bash process attached to a fresh PTY.
-    pub fn spawn() -> Result<Self> {
+    /// `shell` is the binary to run (normally `bash`, but can be a full
+    /// path to a specific bash installation via config) and
+    /// `extra_args` are appended after the three flags shdev always
+    /// passes. **This assumes `shell` is bash or something bash-
+    /// compatible enough to accept `--noprofile`/`--norc`/`--noediting`
+    /// and behave like bash for the `HISTCONTROL`/`printf`-based
+    /// execution protocol in `executor.rs` and `pty/manager.rs` — it is
+    /// not general multi-shell support.** See `config.rs`'s doc comment.
+    pub fn spawn(shell: &str, extra_args: &[String]) -> Result<Self> {
         let pty_system = native_pty_system();
         let pair = pty_system
             .openpty(PtySize {
@@ -27,10 +35,13 @@ impl BashProcess {
             })
             .context("failed to open pty")?;
 
-        let mut cmd = CommandBuilder::new("bash");
+        let mut cmd = CommandBuilder::new(shell);
         cmd.arg("--noprofile");
         cmd.arg("--norc");
         cmd.arg("--noediting");
+        for arg in extra_args {
+            cmd.arg(arg);
+        }
         // A minimal, predictable prompt so the manager can detect completion.
         cmd.env("PS1", "");
         cmd.env("TERM", "xterm-256color");

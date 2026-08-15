@@ -80,6 +80,17 @@ pub struct AppState {
     /// batch is in progress (a lone `Ctrl+Enter` run doesn't set these).
     pub batch_position: usize,
     pub batch_total: usize,
+
+    // --- Command-history recall (Alt+Up / Alt+Down) --------------------
+    /// Position within `output_history` while recalling, counted the
+    /// same way as `history_selected` (0 = most recent). `None` means
+    /// not currently recalling.
+    pub history_recall_index: Option<usize>,
+    /// What the current line contained before recall started, restored
+    /// if you recall past the most recent entry back to "nothing
+    /// selected" — same behavior as pressing Down past the newest
+    /// history entry at a real shell prompt.
+    pub history_recall_saved_line: Option<String>,
 }
 
 impl AppState {
@@ -104,6 +115,8 @@ impl AppState {
             batch_remaining: std::collections::VecDeque::new(),
             batch_position: 0,
             batch_total: 0,
+            history_recall_index: None,
+            history_recall_saved_line: None,
         }
     }
 

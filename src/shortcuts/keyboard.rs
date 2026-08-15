@@ -28,11 +28,27 @@ pub enum Intent {
     ToggleHistory,
     Undo,
     Redo,
+    RecallPreviousCommand,
+    RecallNextCommand,
     None,
 }
 
 pub fn handle_key_event(key: KeyEvent) -> Intent {
     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+    let alt = key.modifiers.contains(KeyModifiers::ALT);
+
+    // Alt+Up / Alt+Down: readline-style recall of previously *run*
+    // commands into the current line, like pressing Up at a real shell
+    // prompt — distinct from plain Up/Down (cursor movement) and
+    // Ctrl+Up/Down (output scroll / history-browser navigation), so it
+    // gets its own modifier axis rather than overloading either.
+    if alt && !ctrl {
+        match key.code {
+            KeyCode::Up => return Intent::RecallPreviousCommand,
+            KeyCode::Down => return Intent::RecallNextCommand,
+            _ => {}
+        }
+    }
 
     match (ctrl, key.code) {
         (true, KeyCode::Enter) => Intent::RunCurrentLine,

@@ -93,13 +93,19 @@ impl App {
             None => Editor::new(),
         };
 
-        let executor = ExecutionEngine::new()?;
+        let loaded = crate::config::Config::load();
+        let timeout = std::time::Duration::from_secs(loaded.config.command_timeout_secs);
+        let executor = ExecutionEngine::new(&loaded.config.shell, &loaded.config.shell_args, timeout)?;
         let state = AppState::new(editor, path.clone());
         let mut app = Self { state, executor, events: VecDeque::new() };
 
         if let Some(p) = &path {
-            app.set_status(format!("Opened {}", p.display()));
             app.emit(AppEvent::FileLoaded { path: p.display().to_string() });
+        }
+        if let Some(warning) = loaded.warning {
+            app.set_status(warning);
+        } else if let Some(p) = &path {
+            app.set_status(format!("Opened {}", p.display()));
         } else {
             app.set_status("New buffer (unsaved) — Ctrl+S to save".to_string());
         }
@@ -108,6 +114,15 @@ impl App {
     }
 
     pub fn dispatch(&mut self, intent: Intent) {
+        // Any intent other than continuing to recall ends the recall
+        // session — the recalled (or restored) text just becomes normal
+        // line content from here on, same as pressing any other key at
+        // a real shell prompt after using Up/Down to recall a command.
+        if !matches!(intent, Intent::RecallPreviousCommand | Intent::RecallNextCommand) {
+            self.state.history_recall_index = None;
+            self.state.history_recall_saved_line = None;
+        }
+
         match intent {
             Intent::InsertChar(c) if self.state.focus == Focus::Editor => self.state.editor.insert_char(c),
             Intent::InsertNewline if self.state.focus == Focus::Editor => self.state.editor.insert_newline(),
@@ -148,6 +163,8 @@ impl App {
                 let status = if self.state.editor.redo() { "Redo" } else { "Nothing to redo" };
                 self.set_status(status.to_string());
             }
+            Intent::RecallPreviousCommand if self.state.focus == Focus::Editor => self.recall_command(true),
+            Intent::RecallNextCommand if self.state.focus == Focus::Editor => self.recall_command(false),
             Intent::RunCurrentLine => self.start_run(),
             Intent::RunAllBefore => self.start_run_all_before(),
             Intent::CancelExecution => self.cancel_run(),
@@ -173,6 +190,52 @@ impl App {
                 self.state.output_history.len()
             ));
         }
+    }
+
+    /// Alt+Up (`older=true`) / Alt+Down (`older=false`): readline-style
+    /// recall of a previously *run* command into the current line, the
+    /// same way pressing Up/Down at a real shell prompt cycles through
+    /// history. Reuses `output_history` (already tracked for the
+    /// execution-history browser) rather than keeping a second, separate
+    /// command list — the two features share the same underlying data,
+    /// just different UI for browsing it.
+    fn recall_command(&mut self, older: bool) {
+        if self.state.output_history.is_empty() {
+            self.set_status("No command history yet".to_string());
+            return;
+        }
+
+        let max = self.state.output_history.len() - 1;
+        let next_index = match self.state.history_recall_index {
+            None if older => {
+                self.state.history_recall_saved_line = Some(self.state.editor.current_line().to_string());
+                Some(0)
+            }
+            None => return, // Alt+Down with nothing being recalled: no-op
+            Some(idx) if older => {
+                if idx >= max {
+                    self.set_status("Beginning of command history".to_string());
+                    return;
+                }
+                Some(idx + 1)
+            }
+            Some(0) => {
+                // Recalled past the newest entry: restore what was on
+                // the line before recall started, same as a real shell.
+                let saved = self.state.history_recall_saved_line.take().unwrap_or_default();
+                let row = self.state.editor.cursor.row;
+                self.state.editor.set_line_text(row, saved);
+                None
+            }
+            Some(idx) => Some(idx - 1),
+        };
+
+        self.state.history_recall_index = next_index;
+        let Some(idx) = next_index else { return };
+        let source_idx = self.state.output_history.len() - 1 - idx;
+        let command = self.state.output_history[source_idx].command.clone();
+        let row = self.state.editor.cursor.row;
+        self.state.editor.set_line_text(row, command);
     }
 
     /// Drain every event currently available from the executor thread and

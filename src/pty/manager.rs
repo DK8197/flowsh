@@ -51,8 +51,8 @@ pub(crate) const MARKER_PREFIX: &str = "___SHDEV_DONE___";
 const INTERRUPT_BYTE: u8 = 0x03;
 
 impl PtyManager {
-    pub fn new() -> Result<Self> {
-        let mut bash = BashProcess::spawn()?;
+    pub fn new(shell: &str, shell_args: &[String]) -> Result<Self> {
+        let mut bash = BashProcess::spawn(shell, shell_args)?;
 
         let (tx, rx): (Sender<PtyEvent>, Receiver<PtyEvent>) = unbounded();
         spawn_reader_thread(bash.take_reader(), tx);

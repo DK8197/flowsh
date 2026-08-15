@@ -3,8 +3,10 @@
 ```
 src/
 ├── main.rs        entry point: terminal setup/teardown, event loop, polls executor events
+├── config.rs      config file (~/.config/shdev/config.toml) — never fatal if missing/invalid
 ├── app/           AppState (single source of truth), App controller, AppEvent bus
-├── editor/        Buffer, Cursor, Editor — editing only, never executes
+├── editor/        Buffer, Cursor, Editor, blocks (compound-statement detection),
+│                  highlight (syntax-highlighting tokenizer) — editing only, never executes or draws
 ├── executor/      ExecutionEngine — a background thread that owns the bash session and
 │                  streams progress back over a channel; never blocks the UI thread
 ├── pty/           BashProcess (spawn) + PtyManager (thin primitives: send_line,

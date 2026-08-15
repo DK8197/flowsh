@@ -252,7 +252,55 @@ was added specifically to close that gap: it pre-populates a fake
 "outer terminal" `HISTFILE` with realistic content and checks isolation
 in both directions.
 
-## 10. Raw terminal byte-dumps are an unreliable test oracle — strip ANSI, and still expect noise
+## 10. Alt+Arrow is not "ESC + the plain arrow bytes" — that's a different, ambiguous sequence
+
+**What happened:** implementing command-history recall (Alt+Up/Alt+Down),
+the natural-seeming encoding to *test* against was `\x1b\x1b[A` — take
+plain Up's bytes (`\x1b[A`) and prepend one more `\x1b` to mean "Alt was
+held." A single Alt+Up worked in testing; **pressing it twice in a row
+did not** — the second press typed literal `[A` characters into the
+buffer instead of recalling anything.
+
+**Why:** that encoding is wrong, and crossterm's own parser explains why
+by construction. On seeing a leading `\x1b`, it looks at the *next*
+byte: if that's `[`, it parses a plain (non-Alt) CSI sequence; if that's
+*also* `\x1b`, it treats the pair as "Escape key pressed twice" and
+stops there, leaving the remaining `[A` bytes to be parsed as two
+unrelated, literal keypresses. `\x1b\x1b[A` hits exactly that second
+case — the two leading `\x1b` bytes collapse into one "Esc" event, and
+`[`/`A` fall through as plain characters. The real, standard encoding
+terminals actually send for Alt+Up is the xterm CSI-modifier form,
+`\x1b[1;3A` (modifier `3` = Alt in the standard 1-based bitmask: 1=none,
++1=shift, +2=alt, +4=ctrl) — crossterm has a dedicated parser for this
+(`parse_csi_modifier_key_code`) that's completely different from the
+"prepend ESC" scheme.
+
+**The fix, and the rule going forward:** the actual keybinding
+implementation (`shortcuts/keyboard.rs`'s `alt` check) was correct the
+whole time — real terminals send the CSI-modifier form, and crossterm
+decodes that into `KeyModifiers::ALT` correctly regardless. **This was a
+test-harness bug, not a product bug** — `tests/shell_behavior_test.py`'s
+`ALT_UP`/`ALT_DOWN` constants were fixed to `\x1b[1;3A`/`\x1b[1;3B`.
+
+Worth being precise about one thing here, since getting it wrong would
+undermine the point of this file: an early, informal check of a single
+wrong-encoding press reported success, which looked like "the bug only
+shows up on a second press." It didn't, really — with the wrong bytes,
+a single press produces three unrelated key events (Esc, then literal
+`[` and `A` characters typed into the buffer), which doesn't recall
+anything at all. The check passed anyway because it searched the
+*entire accumulated session output* for a string that was already
+present from an earlier, unrelated step — a false positive from the
+test's own methodology, not a real coincidence in how the wrong
+encoding gets parsed. **Never guess a modified key's byte encoding from
+"prepend ESC to the unmodified sequence" intuition** — check crossterm's
+parser (or capture real key events via a temporary debug log — see
+gotcha #9's technique) before writing a test that simulates one, and
+when a check passes, double check it's actually asserting on output
+produced by the step being tested, not on stale content still sitting
+in a cumulative buffer from an earlier step.
+
+## 11. Raw terminal byte-dumps are an unreliable test oracle — strip ANSI, and still expect noise
 
 Not a shdev bug, but a real trap in *verifying* shdev: ratatui's
 diff-based rendering, combined with rapid successive redraws (e.g. while

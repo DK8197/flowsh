@@ -15,10 +15,11 @@ use crossbeam_channel::{unbounded, Receiver, Select, Sender, TryRecvError};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
-/// Safety-net ceiling on any single command's runtime. Manual Ctrl+C
+/// Safety-net ceiling on any single command's runtime, if not overridden
+/// by config (`Config::command_timeout_secs`). Manual Ctrl+C
 /// cancellation is the primary mechanism; this only guards against a
 /// forgotten `sleep 999999` eating the session forever.
-pub const MAX_RUNTIME: Duration = Duration::from_secs(15 * 60);
+pub const DEFAULT_MAX_RUNTIME: Duration = Duration::from_secs(15 * 60);
 
 /// Events streamed back from the executor thread to the UI thread.
 pub enum ExecEvent {
@@ -41,15 +42,15 @@ pub struct ExecutionEngine {
 }
 
 impl ExecutionEngine {
-    pub fn new() -> Result<Self> {
+    pub fn new(shell: &str, shell_args: &[String], max_runtime: Duration) -> Result<Self> {
         // Spawned on the calling thread so startup errors (bash missing,
         // PTY unavailable, ...) surface synchronously from `App::new`
         // rather than silently failing inside a background thread.
-        let pty = PtyManager::new()?;
+        let pty = PtyManager::new(shell, shell_args)?;
 
         let (cmd_tx, cmd_rx) = unbounded();
         let (event_tx, event_rx) = unbounded();
-        let handle = thread::spawn(move || executor_thread(pty, cmd_rx, event_tx));
+        let handle = thread::spawn(move || executor_thread(pty, cmd_rx, event_tx, max_runtime));
 
         Ok(Self { cmd_tx, event_rx, handle: Some(handle) })
     }
@@ -118,11 +119,11 @@ fn resynchronize_after_interrupt(pty: &mut PtyManager, marker: &mut String) {
     ));
 }
 
-fn executor_thread(mut pty: PtyManager, cmd_rx: Receiver<ExecCommand>, event_tx: Sender<ExecEvent>) {
+fn executor_thread(mut pty: PtyManager, cmd_rx: Receiver<ExecCommand>, event_tx: Sender<ExecEvent>, max_runtime: Duration) {
     loop {
         match cmd_rx.recv() {
             Ok(ExecCommand::Run { line_id, command }) => {
-                match run_one(&mut pty, line_id, &command, &cmd_rx, &event_tx) {
+                match run_one(&mut pty, line_id, &command, &cmd_rx, &event_tx, max_runtime) {
                     RunOutcome::Completed => continue,
                     RunOutcome::ShutdownRequested => break,
                 }
@@ -145,6 +146,7 @@ fn run_one(
     command: &str,
     cmd_rx: &Receiver<ExecCommand>,
     event_tx: &Sender<ExecEvent>,
+    max_runtime: Duration,
 ) -> RunOutcome {
     let trimmed = command.trim();
     if trimmed.is_empty() {
@@ -186,7 +188,7 @@ fn run_one(
     }
 
     let started_at = Instant::now();
-    let deadline = started_at + MAX_RUNTIME;
+    let deadline = started_at + max_runtime;
     let pty_rx = pty.event_receiver();
 
     let mut sel = Select::new();

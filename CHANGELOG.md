@@ -38,6 +38,30 @@ follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   running shdev session, which `/dev/null` alone wouldn't do (it stops
   persistence to disk, not entries existing in the current session's
   in-memory list).
+- **v0.2 (in progress): config file** (`~/.config/shdev/config.toml`) —
+  `shell`, `shell_args`, `command_timeout_secs`. A missing or malformed
+  file is never fatal; falls back to defaults with a one-line status-bar
+  warning. Unblocked a toolchain constraint from earlier in the project
+  (`serde`/`toml`'s transitive deps needed `edition2024`, unavailable on
+  the sandboxed `rustc 1.75`) by pinning `toml` to `0.7` and a few of its
+  own transitive deps down — see `.claude/steering/tech.md`.
+- **v0.2: configurable shell binary/path and command timeout**, both
+  read from the new config file. Scoped honestly: `shell` is "a
+  different bash binary or path," not general multi-shell support — the
+  execution protocol (`HISTCONTROL`, `printf`-based exit-code capture)
+  is genuinely bash-specific.
+- **v0.2: command-history recall** (Alt+Up/Alt+Down) — readline-style
+  recall of a previously *run* command into the current line, cycling
+  further back/forward, restoring unsaved draft text if you recall past
+  the newest entry. Reuses the existing `output_history` rather than
+  tracking commands twice; implemented as a single undoable edit
+  (`Editor::set_line_text`).
+- **v0.2: syntax highlighting** — keywords, single/double-quoted
+  strings, `#` comments, `$VAR`-style variables, and operators, colored
+  live via a lightweight keyword-based tokenizer (`editor::highlight`),
+  same bounded philosophy as compound-block detection. Kept
+  dependency-free of `ratatui` in `editor/`; `ui::renderer` owns the
+  actual color mapping.
 
 ### Fixed
 - A `for`-loop block sent for execution as raw multi-line text (joined

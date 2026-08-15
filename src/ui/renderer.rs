@@ -5,6 +5,7 @@
 //! auto-scroll adjustments live here rather than in `App`.
 
 use crate::app::state::{AppState, Focus};
+use crate::editor::highlight::{self, TokenKind};
 use crate::models::LineStatus;
 use crate::ui::{layout, output};
 use ratatui::layout::Rect;
@@ -29,6 +30,36 @@ fn status_glyph(status: &LineStatus) -> (&'static str, Color) {
         LineStatus::Failed => ("✗", Color::Red),
         LineStatus::Cancelled => ("⊘", Color::Magenta),
     }
+}
+
+/// Color for each syntax-highlighting token kind. Kept here (not in
+/// `editor::highlight`) since `editor/` doesn't know rendering exists —
+/// the tokenizer only classifies text, this is what turns that
+/// classification into an actual color.
+fn token_color(kind: TokenKind) -> Option<Color> {
+    match kind {
+        TokenKind::Keyword => Some(Color::Magenta),
+        TokenKind::String => Some(Color::Green),
+        TokenKind::Comment => Some(Color::DarkGray),
+        TokenKind::Variable => Some(Color::Cyan),
+        TokenKind::Operator => Some(Color::Yellow),
+        TokenKind::Plain => None, // default terminal foreground
+    }
+}
+
+/// Tokenize `text` and build styled spans, applying `base_modifier`
+/// (e.g. bold for the cursor's line) on top of each token's color.
+fn highlighted_spans(text: &str, base_modifier: Modifier) -> Vec<Span<'static>> {
+    highlight::tokenize(text)
+        .into_iter()
+        .map(|token| {
+            let mut style = Style::default().add_modifier(base_modifier);
+            if let Some(color) = token_color(token.kind) {
+                style = style.fg(color);
+            }
+            Span::styled(token.text, style)
+        })
+        .collect()
 }
 
 /// Line-number gutter width, in characters (including the trailing
@@ -90,12 +121,11 @@ fn draw_editor(f: &mut Frame, area: Rect, state: &mut AppState) {
             let (glyph, color) = status_glyph(&line.status);
             let gutter = Span::styled(format!("{glyph} "), Style::default().fg(color));
             let line_no = Span::styled(format!("{:>3} ", idx + 1), Style::default().fg(Color::DarkGray));
-            let text_style = if idx == cursor_row {
-                Style::default().add_modifier(Modifier::BOLD)
-            } else {
-                Style::default()
-            };
-            TLine::from(vec![gutter, line_no, Span::styled(line.text.clone(), text_style)])
+            let base_modifier = if idx == cursor_row { Modifier::BOLD } else { Modifier::empty() };
+
+            let mut spans = vec![gutter, line_no];
+            spans.extend(highlighted_spans(&line.text, base_modifier));
+            TLine::from(spans)
         })
         .collect();
 

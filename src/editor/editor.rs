@@ -184,6 +184,25 @@ impl Editor {
         self.dirty = true;
     }
 
+    /// Replace the full text of `row` in one step (cursor moves to the
+    /// end of the new text). Used by command-history recall (Alt+Up/
+    /// Alt+Down) to swap the current line's content the way pressing Up
+    /// at a real shell prompt does — a single undo step restores
+    /// whatever was on the line before recall started.
+    pub fn set_line_text(&mut self, row: usize, text: String) {
+        self.finalize_pending();
+        let before = self.buffer.line(row).cloned().unwrap_or_default();
+        let cursor_before = self.cursor;
+        let mut new_line = before.clone();
+        new_line.text = text;
+        self.buffer.replace_rows(row, 1, vec![new_line]);
+        let col = self.buffer.line_len(row);
+        self.cursor.move_to(row, col);
+        let after = vec![self.buffer.line(row).cloned().unwrap_or_default()];
+        self.push_patch(EditPatch { start_row: row, before: vec![before], after, cursor_before, cursor_after: self.cursor });
+        self.dirty = true;
+    }
+
     /// Undo the most recent edit (finalizing any in-progress typing/
     /// deleting group first). Returns `false` if there was nothing to
     /// undo.

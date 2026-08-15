@@ -49,6 +49,7 @@ python3 tests/shell_behavior_test.py
 | Backspace / Delete       | Edit                                                 |
 | Enter                    | Insert a newline (splits the line) — auto-inserts the matching `done`/`fi` if this line opens a `for`/`while`/`until`/`if` block |
 | Ctrl+Z / Ctrl+Y          | Undo / redo                                          |
+| Alt+Up / Alt+Down        | Recall a previously *run* command into the current line (readline-style), cycling further back/forward |
 
 **Note on Ctrl+Enter / Ctrl+J:** most terminals can't send Ctrl+Enter as a
 distinct signal — there's no universal escape sequence for it. shdev opts
@@ -145,10 +146,65 @@ kind of bug that's invisible until you actually try to cancel something.
 
 ### Timeout as a safety net
 
-Every command still has a ceiling (`executor::MAX_RUNTIME`, 15 minutes),
-which auto-triggers the same interrupt-and-resync path Ctrl+C uses. This
+Every command still has a ceiling (`command_timeout_secs` in config, 15
+minutes by default — see `executor::DEFAULT_MAX_RUNTIME`), which
+auto-triggers the same interrupt-and-resync path Ctrl+C uses. This
 exists purely as a backstop against a forgotten `sleep 999999`, not as
 the primary mechanism — Ctrl+C is.
+
+### Config file
+
+`~/.config/shdev/config.toml` (via the `dirs` crate, so it follows
+platform convention — XDG on Linux). Every field is optional and has a
+sensible default:
+
+```toml
+shell = "bash"              # or a full path, e.g. "/usr/local/bin/bash5"
+shell_args = []              # extra args appended after --noprofile --norc --noediting
+command_timeout_secs = 900   # 15 minutes
+```
+
+A missing or malformed config file is **never fatal** — shdev always
+starts with defaults; a parse error shows once as a status-bar warning
+instead of refusing to start (`config::Config::load`). `shell` is scoped
+honestly: it's a configurable **bash binary/path**, not general
+multi-shell support. The execution protocol (`HISTCONTROL`, `printf`-
+based exit-code capture — see the sections above) is genuinely
+bash-specific; pointing `shell` at zsh or fish will not work correctly.
+It exists for cases like a newer bash installed outside `$PATH`, or a
+container/WSL-specific bash path.
+
+### Command-history recall (`Alt+Up` / `Alt+Down`)
+
+Readline-style recall of a previously **run** command into the current
+line — press Alt+Up to pull the most recent command in, Alt+Up again to
+go further back, Alt+Down to go forward, and Alt+Down past the newest
+entry restores whatever you'd been typing before you started recalling
+(exactly like a real shell prompt). Distinct from the Ctrl+R/F6
+execution history *browser* — this is quick in-line recall, that's a
+full list with output detail. Both reuse the same underlying
+`output_history` rather than tracking commands twice.
+
+Implemented as its own undoable edit (`Editor::set_line_text`, a single
+patch replacing the whole line) — one Ctrl+Z undoes a recall cleanly.
+Any other key press (including running the recalled command) ends the
+recall session, matching real shell behavior: the next Alt+Up starts
+fresh from the most recent command again.
+
+### Syntax highlighting
+
+Keywords (`for`/`if`/`while`/`do`/...), single- and double-quoted
+strings, `#` comments, `$VAR`/`${VAR}`/`$?`-style variables, and
+operators (`|`, `&&`, `>>`, ...) are colored as you type. Same bounded
+philosophy as `editor::blocks`: `editor::highlight` is a lightweight
+character scanner, not a real bash parser, and is honest about it in
+its own doc comment — a keyword-looking word inside a string is
+correctly captured as part of the string (not split out and colored),
+but something like a quote inside `$(...)` command substitution isn't
+specially handled. The tokenizer lives in `editor/` and knows nothing
+about colors (kept dependency-free of `ratatui` so it's fast and
+directly unit-testable); `ui::renderer::token_color` is the one place
+that maps a token's kind to an actual `Color`.
 
 ### Run everything above the cursor (`Ctrl+E`)
 
@@ -356,12 +412,16 @@ streaming output is never hidden behind it.
 - [x] **Auto-completion of block closers** — Enter after a `for`/`while`/`until`/`if` opener auto-inserts `done`/`fi`
 - [x] **`$?` propagates correctly across separate runs** — fixed a real bug where it always reset to 0 regardless of the previous command's actual exit status
 - [x] **Bash's own `history` stays clean** — `HISTCONTROL=ignorespace` plus a leading space on every internal command hides shdev's marker-wrapping protocol from it (one setup line per session is an accepted exception)
-- [x] **Expanded shell-behavior test suite** (`tests/shell_behavior_test.py`) — pipes, redirects, quoting, `$?` propagation, functions, control structures, streaming, batch execution; 18 cases, all passing, drives the real compiled binary through a real PTY
+- [x] **Expanded shell-behavior test suite** (`tests/shell_behavior_test.py`) — pipes, redirects, quoting, `$?` propagation, functions, control structures, streaming, batch execution, history isolation, command-history recall; 25 cases, all passing, drives the real compiled binary through a real PTY
+- [x] **Config file** (`~/.config/shdev/config.toml`) — `shell`, `shell_args`, `command_timeout_secs`; never fatal if missing/malformed, falls back to defaults with a status-bar warning
+- [x] **Configurable shell binary/path** — scoped honestly as "a different bash binary," not multi-shell support (the execution protocol is genuinely bash-specific)
+- [x] **Configurable command timeout** — overrides the 15-minute default safety-net via config
+- [x] **Command-history recall** (Alt+Up/Alt+Down) — readline-style recall of previously run commands into the current line, distinct from the Ctrl+R/F6 execution history browser
+- [x] **Syntax highlighting** — keywords, strings, comments, variables, operators; lightweight keyword-based scanner, same bounded philosophy as compound-block detection
 
 Not yet built: a *real* bash parser (the current block detection is
-keyword-based, not a parser — see Known Limitations), ShellCheck
-integration, config file support, and executors for shells other than
-bash.
+keyword-based, not a parser — see Known Limitations) and ShellCheck
+integration.
 
 ## Known limitations
 
@@ -377,6 +437,12 @@ bash.
   doesn't handle a `#` comment on a body line (it swallows the rest of
   the flattened line) or complex multi-pattern `case` bodies perfectly —
   see `App::flatten_block`'s doc comment for specifics.
+- **Syntax highlighting doesn't understand `$(...)` command
+  substitution or backticks.** A quote inside `$(...)` can confuse the
+  tokenizer's quote-tracking for the rest of that line — same class of
+  bounded-scope limitation as block detection, and for the same reason
+  (a real fix needs a real parser, not more special-casing a character
+  scanner).
 - If a running command ignores or catches SIGINT, Ctrl+C won't stop it
   (same as a real terminal — this isn't a shdev-specific gap).
 - Horizontal scrolling isn't implemented — very long single lines will
